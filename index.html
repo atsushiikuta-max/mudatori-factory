@@ -1,0 +1,797 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1.0">
+<title>ムダ取り工場 | TPS改善シミュレーション</title>
+<script src="https://cdn.tailwindcss.com"></script>
+<script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+<script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<link href="https://fonts.googleapis.com/css2?family=Noto+Sans+JP:wght@300;400;500;700;900&family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --accent:#00d4ff;--accent2:#7c3aed;
+  --ok:#10b981;--warn:#f59e0b;--danger:#ef4444;
+  --bg:#070d1a;--panel:#0d1526;--card-bg:#111827;
+  --border:#1a3050;--text:#e2e8f0;--muted:#64748b;
+}
+body{font-family:'Noto Sans JP',sans-serif;background:var(--bg);color:var(--text);overflow:hidden;height:100vh;user-select:none}
+.orbitron{font-family:'Orbitron',monospace}
+::-webkit-scrollbar{width:3px;height:3px}
+::-webkit-scrollbar-thumb{background:#1e3a5f;border-radius:2px}
+
+/* FACTORY CELL */
+.fcell{
+  position:relative;border-radius:8px;
+  border:1px solid var(--border);
+  background:linear-gradient(135deg,#0b1220 0%,#0f1a30 100%);
+  transition:all .25s ease;overflow:visible;
+}
+.fcell.clickable{cursor:pointer}
+.fcell.clickable:hover{border-color:#f59e0b88;box-shadow:0 0 16px #f59e0b28;transform:translateY(-1px)}
+.fcell.selected{border-color:var(--accent)!important;box-shadow:0 0 24px #00d4ff30!important}
+.fcell.improved{border-color:#10b98188}
+.fcell.improved::after{
+  content:'';position:absolute;inset:0;border-radius:7px;
+  background:radial-gradient(ellipse,rgba(16,185,129,.12) 0%,transparent 70%);
+  pointer-events:none;
+}
+
+/* WASTE BADGES */
+.wbadge{
+  position:absolute;border-radius:50%;
+  display:flex;align-items:center;justify-content:center;
+  border:2px solid;z-index:10;cursor:pointer;
+  animation:wblink 2.2s ease-in-out infinite;
+  box-shadow:0 0 12px currentColor;
+  transition:transform .2s ease;
+}
+.wbadge:hover{transform:scale(1.25) translateY(-2px)!important}
+@keyframes wblink{0%,100%{transform:scale(1)}50%{transform:scale(1.14)}}
+@media(prefers-reduced-motion:reduce){.wbadge{animation:none}}
+
+/* KPI BAR */
+.kbar-fill{
+  height:100%;border-radius:3px;
+  transition:width .9s cubic-bezier(.34,1.56,.64,1);
+  position:relative;overflow:hidden;
+}
+.kbar-fill::after{
+  content:'';position:absolute;top:0;left:-100%;right:0;bottom:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.25),transparent);
+  animation:shimmer 2.5s ease-in-out infinite;
+}
+@keyframes shimmer{to{left:200%}}
+@media(prefers-reduced-motion:reduce){.kbar-fill{transition:none}.kbar-fill::after{animation:none}}
+
+/* CARDS */
+.card{
+  position:relative;border-radius:10px;
+  border:1px solid var(--border);
+  background:linear-gradient(145deg,#0f1a2e,#1a2744);
+  cursor:pointer;transition:transform .2s ease,box-shadow .2s ease,border-color .2s ease;
+  flex-shrink:0;
+}
+.card:hover:not(.disabled){
+  transform:translateY(-10px) scale(1.04);
+  box-shadow:0 20px 40px rgba(0,0,0,.6),0 0 20px rgba(0,212,255,.15);
+  border-color:rgba(0,212,255,.6);
+}
+.card.sel{
+  transform:translateY(-14px) scale(1.06)!important;
+  border-color:var(--accent)!important;
+  box-shadow:0 0 30px rgba(0,212,255,.5),0 20px 40px rgba(0,0,0,.6)!important;
+}
+.card.disabled{opacity:.35;cursor:not-allowed;filter:grayscale(.4)}
+.card.applying{animation:card-fly .45s ease forwards;pointer-events:none}
+@keyframes card-fly{0%{transform:translateY(-14px) scale(1.06)}60%{transform:translateY(-60px) scale(1.1);opacity:.7;filter:brightness(2)}100%{transform:translateY(-120px) scale(.4);opacity:0}}
+
+/* BOSS OVERLAY */
+.boss-overlay{
+  position:fixed;inset:0;z-index:99;
+  background:rgba(4,8,20,.88);backdrop-filter:blur(10px);
+  display:flex;align-items:center;justify-content:center;
+}
+.boss-card{
+  background:linear-gradient(135deg,#180a2e,#0d1526);
+  border:2px solid rgba(124,58,237,.7);border-radius:20px;
+  box-shadow:0 0 80px rgba(124,58,237,.4);
+  max-width:560px;width:92%;
+  animation:boss-pop .5s cubic-bezier(.34,1.56,.64,1);
+}
+@keyframes boss-pop{from{transform:scale(.4) translateY(40px);opacity:0}to{transform:scale(1);opacity:1}}
+
+/* VICTORY */
+.victory{
+  position:fixed;inset:0;z-index:200;
+  background:radial-gradient(ellipse at center,#0d2a1a 0%,#050b14 100%);
+  display:flex;align-items:center;justify-content:center;flex-direction:column;
+  text-align:center;
+  animation:fade-in .6s ease;
+}
+@keyframes fade-in{from{opacity:0}to{opacity:1}}
+
+/* NUMBER POP */
+.npop{
+  position:fixed;pointer-events:none;z-index:50;
+  font-size:18px;font-weight:900;
+  animation:npop-fly 1.4s ease forwards;
+}
+@keyframes npop-fly{0%{opacity:1;transform:translateY(0) scale(1)}50%{opacity:1;transform:translateY(-40px) scale(1.2)}100%{opacity:0;transform:translateY(-90px) scale(.7)}}
+
+/* EVENT ITEMS */
+.evitem{animation:ev-in .3s ease;border-left:3px solid;border-radius:4px;margin-bottom:3px}
+@keyframes ev-in{from{opacity:0;transform:translateX(-12px)}to{opacity:1;transform:translateX(0)}}
+
+/* SCROLLBAR in cards */
+.card-row{display:flex;gap:8px;overflow-x:auto;padding-bottom:4px;align-items:flex-end}
+</style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel" data-presets="react">
+const {useState,useEffect,useReducer,useCallback,useRef} = React;
+
+/* ===================== DATA ===================== */
+const WT = {
+  inventory:    {label:'在庫のムダ',      icon:'📦',col:'#f59e0b',bg:'rgba(245,158,11,.15)',brd:'#f59e0b80'},
+  waiting:      {label:'手待ちのムダ',    icon:'⏳',col:'#ef4444',bg:'rgba(239,68,68,.15)', brd:'#ef444480'},
+  transport:    {label:'運搬のムダ',      icon:'🚚',col:'#8b5cf6',bg:'rgba(139,92,246,.15)',brd:'#8b5cf680'},
+  processing:   {label:'加工のムダ',      icon:'⚙️',col:'#06b6d4',bg:'rgba(6,182,212,.15)', brd:'#06b6d480'},
+  motion:       {label:'動作のムダ',      icon:'🏃',col:'#f97316',bg:'rgba(249,115,22,.15)',brd:'#f9731680'},
+  defect:       {label:'不良のムダ',      icon:'❌',col:'#dc2626',bg:'rgba(220,38,38,.15)', brd:'#dc262680'},
+  overproduction:{label:'作りすぎのムダ', icon:'📈',col:'#22c55e',bg:'rgba(34,197,94,.15)', brd:'#22c55e80'},
+};
+
+const CELLS = [
+  {id:'recv',   nm:'受入・入庫',  ic:'🏗️'},
+  {id:'mc1',    nm:'機械加工①', ic:'🔧'},
+  {id:'mc2',    nm:'機械加工②', ic:'⚙️'},
+  {id:'mc3',    nm:'機械加工③', ic:'🔩'},
+  {id:'store',  nm:'部品倉庫',   ic:'🗃️'},
+  {id:'asm1',   nm:'組立①',     ic:'🔨'},
+  {id:'asm2',   nm:'組立②',     ic:'🛠️'},
+  {id:'wip',    nm:'仕掛品置場', ic:'📋'},
+  {id:'insp',   nm:'検査・調整', ic:'🔍'},
+  {id:'fin',    nm:'完成品倉庫', ic:'🏪'},
+  {id:'ship',   nm:'出荷場',     ic:'🚢'},
+  {id:'office', nm:'生産管理室', ic:'💻'},
+];
+
+const CARDS = [
+  {id:'5s',    nm:'5S活動',       ic:'✨',rar:'common',col:'#10b981',cost:1,
+   desc:'整理・整頓・清掃・清潔・躾',tw:['inventory','motion','waiting'],
+   fx:{profitRate:1.5,productivity:3,defectRate:-.5}},
+  {id:'viz',   nm:'見える化',     ic:'👁️',rar:'common',col:'#06b6d4',cost:1,
+   desc:'情報・問題をリアルタイム可視化',tw:['waiting','overproduction'],
+   fx:{deliveryRate:3,productivity:2}},
+  {id:'std',   nm:'標準作業',     ic:'📋',rar:'common',col:'#8b5cf6',cost:1,
+   desc:'最適な作業手順を標準化・文書化',tw:['motion','processing','waiting'],
+   fx:{defectRate:-1,productivity:4,profitRate:1}},
+  {id:'why',   nm:'なぜなぜ分析', ic:'🤔',rar:'rare',  col:'#f59e0b',cost:2,
+   desc:'根本原因を5回のなぜで追究',tw:['defect','processing'],
+   fx:{defectRate:-3,profitRate:2}},
+  {id:'poka',  nm:'ポカヨケ',     ic:'🛡️',rar:'rare',  col:'#ef4444',cost:2,
+   desc:'人為的ミスを物理的に防ぐ仕組み',tw:['defect'],
+   fx:{defectRate:-4,deliveryRate:2,profitRate:1.5}},
+  {id:'smed',  nm:'SMED',         ic:'⚡',rar:'rare',  col:'#f97316',cost:2,
+   desc:'段取り替え時間を10分以内に短縮',tw:['waiting','overproduction'],
+   fx:{productivity:5,deliveryRate:4,profitRate:2}},
+  {id:'lb',    nm:'ラインバランス',ic:'⚖️',rar:'rare',  col:'#a855f7',cost:2,
+   desc:'工程間の負荷を均等化',tw:['waiting','overproduction','inventory'],
+   fx:{productivity:6,deliveryRate:3,profitRate:2}},
+  {id:'lay',   nm:'レイアウト改善',ic:'📐',rar:'epic',  col:'#0891b2',cost:3,
+   desc:'工場レイアウトを最適化し運搬最小化',tw:['transport','motion'],
+   fx:{productivity:5,profitRate:3,deliveryRate:3}},
+  {id:'sl',    nm:'小ロット化',   ic:'📦',rar:'epic',  col:'#16a34a',cost:3,
+   desc:'ロットを小さくし在庫・LTを削減',tw:['inventory','overproduction'],
+   fx:{deliveryRate:6,profitRate:3,productivity:2}},
+  {id:'auto',  nm:'自働化',       ic:'🤖',rar:'epic',  col:'#7c3aed',cost:3,
+   desc:'異常を自動検知し自動停止する仕組み',tw:['defect','processing','waiting'],
+   fx:{defectRate:-5,productivity:7,profitRate:4}},
+];
+
+const BOSSES = [
+  {id:'drg', nm:'品質クレームドラゴン🐉', hp:90,  col:'#ef4444',
+   trig:kpi=>kpi.defectRate>12,
+   desc:'大口顧客から品質クレーム！出荷が危機です',
+   atk:{defectRate:3,profitRate:-3,deliveryRate:-5},
+   weak:['poka','why','std'],
+   rwd:{profitRate:5,defectRate:-5,deliveryRate:5}},
+  {id:'mon', nm:'在庫怪獣👾',           hp:80,  col:'#f59e0b',
+   trig:kpi=>kpi.productivity<55,
+   desc:'在庫が膨れキャッシュフローが危機！',
+   atk:{profitRate:-4,productivity:-5,deliveryRate:-3},
+   weak:['sl','lb','5s'],
+   rwd:{profitRate:4,productivity:8,deliveryRate:4}},
+  {id:'rob', nm:'納期遅延ロボ🤖',        hp:90,  col:'#8b5cf6',
+   trig:kpi=>kpi.deliveryRate<65,
+   desc:'大量の納期遅延クレームが一度に！',
+   atk:{deliveryRate:-8,profitRate:-3,productivity:-4},
+   weak:['smed','lb','viz'],
+   rwd:{deliveryRate:10,profitRate:4,productivity:5}},
+  {id:'gol', nm:'原価高騰ゴーレム⚗️',   hp:110, col:'#06b6d4',
+   trig:kpi=>kpi.profitRate<4,
+   desc:'原材料費・人件費が高騰し赤字寸前！',
+   atk:{profitRate:-5,productivity:-3},
+   weak:['auto','lay','std'],
+   rwd:{profitRate:8,productivity:6,defectRate:-3}},
+];
+
+const INIT_KPI = {revenue:8500,profitRate:6.5,deliveryRate:72,defectRate:8.5,productivity:58};
+
+const WASTE_OFFSETS = [
+  [0,0],[18,10],[-18,12],[8,-12],[-10,15],[20,-8],[-20,-5]
+];
+
+function getCardById(id){return CARDS.find(c=>c.id===id)}
+
+/* ===================== REDUCER ===================== */
+function mkState(){
+  return {
+    turn:1,
+    kpi:{...INIT_KPI},
+    ip:12,
+    cards:['5s','std','viz','why','poka'].map(getCardById),
+    selWaste:null,
+    selCard:null,
+    wastes:[
+      {id:'w1',type:'inventory',     cell:'store',sev:3},
+      {id:'w2',type:'waiting',       cell:'asm1', sev:2},
+      {id:'w3',type:'transport',     cell:'mc1',  sev:2},
+      {id:'w4',type:'defect',        cell:'insp', sev:3},
+      {id:'w5',type:'overproduction',cell:'fin',  sev:2},
+      {id:'w6',type:'motion',        cell:'asm2', sev:1},
+      {id:'w7',type:'processing',    cell:'mc2',  sev:2},
+      {id:'w8',type:'inventory',     cell:'wip',  sev:2},
+      {id:'w9',type:'waiting',       cell:'mc3',  sev:1},
+    ],
+    improved:[],
+    events:[{id:'e0',tp:'start',msg:'🏭 ゲーム開始！工場マップのムダを見つけて改善しよう',t:Date.now()}],
+    boss:null,
+    lvl:0,
+    totalImproved:0,
+    victory:false,
+    pops:[],
+    bossDefeated:[],
+  };
+}
+
+function reducer(s,a){
+  switch(a.type){
+    case 'SEL_WASTE':
+      if(s.boss) return s;
+      return {...s, selWaste:s.selWaste?.id===a.w.id?null:a.w, selCard:null};
+    case 'SEL_CARD':
+      if(!s.selWaste||s.boss) return s;
+      return {...s, selCard:s.selCard?.id===a.c.id?null:a.c};
+    case 'APPLY':{
+      const {w,c}=a;
+      if(!w||!c||s.ip<c.cost) return s;
+
+      const kpi={...s.kpi};
+      const fx=c.fx;
+      if(fx.profitRate)   kpi.profitRate   =Math.min(35,Math.max(0,kpi.profitRate+fx.profitRate));
+      if(fx.deliveryRate) kpi.deliveryRate =Math.min(100,Math.max(0,kpi.deliveryRate+fx.deliveryRate));
+      if(fx.defectRate)   kpi.defectRate   =Math.min(30,Math.max(0,kpi.defectRate+fx.defectRate));
+      if(fx.productivity) kpi.productivity =Math.min(100,Math.max(0,kpi.productivity+fx.productivity));
+      kpi.revenue=Math.round(s.kpi.revenue*(1+(kpi.profitRate-s.kpi.profitRate)*0.015));
+
+      const wastes=s.wastes.filter(x=>x.id!==w.id);
+      const improved=s.improved.includes(w.cell)?s.improved:[...s.improved,w.cell];
+
+      const newCards=s.cards.filter(x=>x.id!==c.id);
+      const avail=CARDS.map(x=>x.id).filter(id=>!newCards.find(x=>x.id===id));
+      if(avail.length>0){
+        const drawn=CARDS.find(x=>x.id===avail[Math.floor(Math.random()*avail.length)]);
+        if(drawn) newCards.push(drawn);
+      }
+
+      const turn=s.turn+1;
+      let addW=[];
+      if(turn%3===0&&wastes.length<9){
+        const types=Object.keys(WT);
+        const freeCells=CELLS.map(c=>c.id).filter(id=>!wastes.find(x=>x.cell===id));
+        if(freeCells.length>0){
+          const rc=freeCells[Math.floor(Math.random()*freeCells.length)];
+          const rt=types[Math.floor(Math.random()*types.length)];
+          addW=[{id:'w'+Date.now(),type:rt,cell:rc,sev:Math.ceil(Math.random()*3)}];
+        }
+      }
+
+      const totalImproved=s.totalImproved+1;
+      const lvl=Math.min(5,Math.floor(totalImproved/3));
+      const cellNm=CELLS.find(c=>c.id===w.cell)?.nm||'';
+      const ev={id:'e'+Date.now(),tp:'ok',
+        msg:`✅ [${cellNm}] ${WT[w.type].label}を「${c.nm}」で改善！`,fx,t:Date.now()};
+
+      let boss=s.boss;
+      if(!boss&&turn>2){
+        for(const b of BOSSES){
+          if(!s.bossDefeated.includes(b.id)&&b.trig(kpi)){
+            boss={...b,curHp:b.hp};
+            break;
+          }
+        }
+      }
+
+      const victory=kpi.profitRate>=20&&kpi.deliveryRate>=90&&kpi.defectRate<=2&&kpi.productivity>=85;
+      const ipGain=c.rar==='epic'?2:c.rar==='rare'?1:1;
+
+      return {...s,turn,kpi,ip:Math.max(0,s.ip-c.cost)+ipGain,
+        cards:newCards.slice(0,6),wastes:[...wastes,...addW],improved,
+        selWaste:null,selCard:null,
+        events:[ev,...s.events].slice(0,20),
+        boss,lvl,totalImproved,victory};
+    }
+    case 'BOSS_ATK':{
+      if(!s.boss) return s;
+      const kpi={...s.kpi};
+      const a=s.boss.atk;
+      if(a.profitRate)   kpi.profitRate  =Math.max(0,kpi.profitRate+a.profitRate);
+      if(a.deliveryRate) kpi.deliveryRate=Math.max(0,kpi.deliveryRate+a.deliveryRate);
+      if(a.defectRate)   kpi.defectRate  =Math.min(30,kpi.defectRate+(a.defectRate||0));
+      if(a.productivity) kpi.productivity=Math.max(0,kpi.productivity+(a.productivity||0));
+      const ev={id:'e'+Date.now(),tp:'boss',msg:`⚠️ ${s.boss.nm}の攻撃！KPI低下`,t:Date.now()};
+      return {...s,kpi,events:[ev,...s.events].slice(0,20)};
+    }
+    case 'BOSS_HIT':{
+      if(!s.boss) return s;
+      const curHp=s.boss.curHp-a.dmg;
+      if(curHp<=0){
+        const kpi={...s.kpi};
+        const r=s.boss.rwd;
+        if(r.profitRate)   kpi.profitRate  =Math.min(35,kpi.profitRate+r.profitRate);
+        if(r.deliveryRate) kpi.deliveryRate=Math.min(100,kpi.deliveryRate+r.deliveryRate);
+        if(r.defectRate)   kpi.defectRate  =Math.max(0,kpi.defectRate+r.defectRate);
+        if(r.productivity) kpi.productivity=Math.min(100,kpi.productivity+r.productivity);
+        const ev={id:'e'+Date.now(),tp:'win',msg:`🏆 ${s.boss.nm}撃退！`,t:Date.now()};
+        return {...s,kpi,boss:null,ip:s.ip+5,
+          bossDefeated:[...s.bossDefeated,s.boss.id],
+          events:[ev,...s.events].slice(0,20)};
+      }
+      return {...s,boss:{...s.boss,curHp}};
+    }
+    case 'ADD_POP':
+      return {...s,pops:[...s.pops,a.pop].slice(-6)};
+    case 'RM_POP':
+      return {...s,pops:s.pops.filter(p=>p.id!==a.id)};
+    case 'RESTART':
+      return mkState();
+    default: return s;
+  }
+}
+
+/* ===================== SUB COMPONENTS ===================== */
+function KBar({label,value,max=100,isRev=false,suf='%',cfn}){
+  const pct=Math.max(0,Math.min(100,((value-(isRev?0:0))/(max-0))*100));
+  const disp=isRev?100-pct:pct;
+  const col=cfn?cfn(value):(disp>70?'#10b981':disp>40?'#f59e0b':'#ef4444');
+  return(
+    <div style={{marginBottom:8}}>
+      <div style={{display:'flex',justifyContent:'space-between',marginBottom:3}}>
+        <span style={{fontSize:9,color:'#94a3b8'}}>{label}</span>
+        <span className="orbitron" style={{fontSize:12,fontWeight:700,color:col}}>
+          {typeof value==='number'?value.toFixed(value>=100?0:1):value}{suf}
+        </span>
+      </div>
+      <div style={{height:5,background:'rgba(255,255,255,.05)',borderRadius:3,overflow:'hidden'}}>
+        <div className="kbar-fill" style={{width:`${disp}%`,background:`linear-gradient(90deg,${col}99,${col})`}}/>
+      </div>
+    </div>
+  );
+}
+
+function WBadge({w,onCk}){
+  const info=WT[w.type];
+  const i=parseInt(w.id.replace(/\D/g,''))%7;
+  const [ox,oy]=WASTE_OFFSETS[i];
+  const sz=w.sev===3?34:w.sev===2?28:23;
+  const fs=w.sev===3?16:w.sev===2?13:10;
+  return(
+    <div className="wbadge"
+      style={{
+        width:sz,height:sz,fontSize:fs,
+        top:`calc(50% + ${oy}px)`,left:`calc(50% + ${ox}px)`,
+        transform:'translate(-50%,-50%)',
+        background:info.bg,borderColor:info.brd,color:info.col,
+        animationDelay:`${i*.4}s`,
+      }}
+      onClick={e=>{e.stopPropagation();onCk(w);}}
+      title={info.label}
+    >{info.icon}</div>
+  );
+}
+
+function FCell({cell,wastes,selected,improved,onWk}){
+  const has=wastes.length>0;
+  return(
+    <div className={`fcell ${has?'clickable':''} ${selected?'selected':''} ${improved&&!has?'improved':''}`}
+      style={{padding:'6px 4px',minHeight:68,position:'relative'}}>
+      <div style={{textAlign:'center',pointerEvents:'none',marginTop:2}}>
+        <div style={{fontSize:17,lineHeight:1}}>{cell.ic}</div>
+        <div style={{fontSize:8.5,color:'#4b637a',marginTop:2,fontWeight:500,lineHeight:1.2}}>{cell.nm}</div>
+      </div>
+      {wastes.map(w=><WBadge key={w.id} w={w} onCk={onWk}/>)}
+    </div>
+  );
+}
+
+function CardTile({card,sel,dis,onSel,twaste}){
+  const rarC={common:'#4b637a',rare:'#d97706',epic:'#9333ea'};
+  const rarL={common:'COMMON',rare:'RARE',epic:'EPIC'};
+  const eff=twaste&&card.tw.some(t=>t===twaste);
+  return(
+    <div className={`card ${sel?'sel':''} ${dis?'disabled':''}`}
+      style={{width:96,padding:'8px 7px',textAlign:'center'}}
+      onClick={()=>!dis&&onSel(card)}>
+      <div style={{fontSize:8,color:rarC[card.rar],letterSpacing:.8,marginBottom:3,fontWeight:700}}>{rarL[card.rar]}</div>
+      <div style={{fontSize:22,marginBottom:3}}>{card.ic}</div>
+      <div style={{fontSize:10.5,fontWeight:700,color:card.col,marginBottom:3,lineHeight:1.2}}>{card.nm}</div>
+      <div style={{borderTop:'1px solid rgba(255,255,255,.05)',paddingTop:3,marginTop:2}}>
+        {Object.entries(card.fx).map(([k,v])=>{
+          const lb={profitRate:'利益率',deliveryRate:'納期率',defectRate:'不良率',productivity:'生産性'};
+          const good=k==='defectRate'?v<0:v>0;
+          if(!lb[k])return null;
+          return<div key={k} style={{fontSize:8.5,color:good?'#10b981':'#ef4444'}}>{lb[k]}{v>0?'+':''}{v}</div>;
+        })}
+        <div style={{fontSize:8.5,color:'#a78bfa',marginTop:2}}>💎 {card.cost}IP</div>
+      </div>
+      {eff&&!dis&&<div style={{
+        position:'absolute',top:-5,right:-5,
+        background:'#10b981',borderRadius:'50%',
+        width:13,height:13,fontSize:8,
+        display:'flex',alignItems:'center',justifyContent:'center',
+        color:'white',fontWeight:900,border:'2px solid var(--bg)',
+      }}>✓</div>}
+    </div>
+  );
+}
+
+function BossModal({boss,dispatch}){
+  const wks=boss.weak.map(id=>CARDS.find(c=>c.id===id)).filter(Boolean);
+  const hpPct=(boss.curHp/boss.hp)*100;
+  useEffect(()=>{const t=setTimeout(()=>dispatch({type:'BOSS_ATK'}),2500);return()=>clearTimeout(t)},[]);
+  const hit=c=>{
+    const dmg=c.rar==='epic'?45:c.rar==='rare'?28:15;
+    dispatch({type:'BOSS_HIT',dmg});
+  };
+  return(
+    <div className="boss-overlay">
+      <div className="boss-card" style={{padding:28}}>
+        <div style={{textAlign:'center',marginBottom:18}}>
+          <div style={{fontSize:56,marginBottom:6,display:'block'}}>{boss.nm.split(' ')[0]}</div>
+          <h2 style={{fontSize:20,fontWeight:900,color:boss.col,marginBottom:6}}>{boss.nm}</h2>
+          <p style={{fontSize:12,color:'#94a3b8',marginBottom:14}}>{boss.desc}</p>
+          <div style={{marginBottom:14}}>
+            <div style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:3}}>
+              <span style={{color:'#94a3b8'}}>BOSS HP</span>
+              <span style={{color:boss.col,fontWeight:700}}>{boss.curHp}/{boss.hp}</span>
+            </div>
+            <div style={{height:10,background:'rgba(255,255,255,.05)',borderRadius:5,overflow:'hidden'}}>
+              <div style={{width:`${hpPct}%`,height:'100%',
+                background:`linear-gradient(90deg,${boss.col}88,${boss.col})`,
+                borderRadius:5,transition:'width .5s ease'}}/>
+            </div>
+          </div>
+        </div>
+        <div style={{marginBottom:14}}>
+          <p style={{fontSize:11,color:'#f59e0b',marginBottom:10,textAlign:'center',fontWeight:700}}>⚡ 弱点カードで攻撃！</p>
+          <div style={{display:'flex',gap:8,justifyContent:'center',flexWrap:'wrap'}}>
+            {wks.map(c=>(
+              <button key={c.id} onClick={()=>hit(c)} style={{
+                padding:'8px 18px',borderRadius:8,border:`1px solid ${c.col}80`,
+                background:`${c.col}22`,color:c.col,fontWeight:700,fontSize:13,
+                cursor:'pointer',transition:'all .2s',
+              }}
+              onMouseOver={e=>{e.currentTarget.style.transform='translateY(-2px)';e.currentTarget.style.background=c.col+'44'}}
+              onMouseOut={e=>{e.currentTarget.style.transform='';e.currentTarget.style.background=c.col+'22'}}
+              >{c.ic} {c.nm}</button>
+            ))}
+          </div>
+        </div>
+        <div style={{background:'rgba(239,68,68,.1)',border:'1px solid rgba(239,68,68,.3)',
+          borderRadius:8,padding:'7px 12px',fontSize:10.5,color:'#fca5a5',textAlign:'center'}}>
+          ⚠️ ボス戦中は通常改善できません。弱点カードで攻撃してください！
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function VictoryScreen({s,dispatch}){
+  return(
+    <div className="victory">
+      <div style={{fontSize:72,marginBottom:14}}>🏆</div>
+      <h1 style={{fontSize:32,fontWeight:900,color:'#f59e0b',marginBottom:8}}>工場改革完成！</h1>
+      <p style={{fontSize:14,color:'#94a3b8',marginBottom:24}}>{s.turn}ターンで{s.totalImproved}件のムダを改善</p>
+      <div style={{display:'flex',gap:16,marginBottom:28,flexWrap:'wrap',justifyContent:'center'}}>
+        {[
+          {l:'利益率',v:s.kpi.profitRate.toFixed(1)+'%',c:'#10b981'},
+          {l:'納期遵守率',v:s.kpi.deliveryRate.toFixed(0)+'%',c:'#00d4ff'},
+          {l:'不良率',v:s.kpi.defectRate.toFixed(1)+'%',c:'#f59e0b'},
+          {l:'生産性',v:s.kpi.productivity.toFixed(0)+'%',c:'#a855f7'},
+        ].map(i=>(
+          <div key={i.l} style={{background:'rgba(255,255,255,.05)',borderRadius:12,padding:'12px 20px',border:`1px solid ${i.c}40`}}>
+            <div style={{fontSize:10,color:'#94a3b8',marginBottom:3}}>{i.l}</div>
+            <div className="orbitron" style={{fontSize:22,fontWeight:900,color:i.c}}>{i.v}</div>
+          </div>
+        ))}
+      </div>
+      <button onClick={()=>dispatch({type:'RESTART'})} style={{
+        padding:'12px 36px',borderRadius:10,border:'2px solid #f59e0b',
+        background:'rgba(245,158,11,.12)',color:'#f59e0b',
+        fontSize:15,fontWeight:700,cursor:'pointer',transition:'all .2s',
+      }}
+      onMouseOver={e=>{e.currentTarget.style.background='rgba(245,158,11,.25)';e.currentTarget.style.transform='translateY(-2px)'}}
+      onMouseOut={e=>{e.currentTarget.style.background='rgba(245,158,11,.12)';e.currentTarget.style.transform=''}}
+      >🔄 もう一度プレイ</button>
+    </div>
+  );
+}
+
+/* ===================== MAIN ===================== */
+function App(){
+  const [s,dispatch]=useReducer(reducer,null,mkState);
+  const [applying,setApplying]=useState(null);
+  const popId=useRef(0);
+
+  const handleApply=useCallback(()=>{
+    if(!s.selWaste||!s.selCard||s.ip<s.selCard.cost) return;
+    const w=s.selWaste,c=s.selCard;
+    setApplying(c.id);
+    // Pop number
+    const p={id:++popId.current,
+      text:Object.entries(c.fx).map(([k,v])=>k==='defectRate'?`不良率${v>0?'+':''}${v}%`:`${k==='profitRate'?'利益率':k==='deliveryRate'?'納期率':'生産性'}${v>0?'+':''}${v}%`).join(' '),
+      x:window.innerWidth*.4,y:window.innerHeight*.6,
+      col:'#10b981'};
+    dispatch({type:'ADD_POP',pop:p});
+    setTimeout(()=>dispatch({type:'RM_POP',id:p.id}),1500);
+    setTimeout(()=>{
+      dispatch({type:'APPLY',w,c});
+      setApplying(null);
+    },380);
+  },[s.selWaste,s.selCard,s.ip]);
+
+  const brightness=0.55+s.lvl*0.09;
+
+  // Group wastes by cell
+  const wmap={};
+  for(const cell of CELLS) wmap[cell.id]=s.wastes.filter(w=>w.cell===cell.id);
+
+  const swt=s.selWaste?.type||null;
+
+  if(s.victory) return <VictoryScreen s={s} dispatch={dispatch}/>;
+
+  return(
+    <div style={{height:'100vh',display:'grid',gridTemplateRows:'48px 1fr',overflow:'hidden'}}>
+
+      {/* ── HEADER ── */}
+      <div style={{
+        background:'linear-gradient(90deg,#0b1220,#111827)',
+        borderBottom:'1px solid #1a3050',
+        display:'flex',alignItems:'center',padding:'0 14px',gap:10,
+        gridColumn:'1/-1',
+      }}>
+        <span style={{fontSize:18}}>🏭</span>
+        <span className="orbitron" style={{fontSize:13,fontWeight:900,color:'#00d4ff',letterSpacing:2}}>ムダ取り工場</span>
+        <div style={{
+          background:'linear-gradient(135deg,#7c3aed,#4f46e5)',
+          borderRadius:6,padding:'3px 10px',
+          fontFamily:'Orbitron,monospace',fontSize:11,letterSpacing:1,color:'white',
+        }}>TURN {s.turn}</div>
+        <div style={{flex:1}}/>
+        <div style={{textAlign:'right',marginRight:8}}>
+          <div style={{fontSize:8.5,color:'#64748b'}}>売上</div>
+          <div className="orbitron" style={{fontSize:13,fontWeight:700,color:'#10b981'}}>¥{s.kpi.revenue.toLocaleString()}万</div>
+        </div>
+        <div style={{
+          background:'rgba(124,58,237,.2)',border:'1px solid rgba(124,58,237,.4)',
+          borderRadius:7,padding:'3px 10px',display:'flex',alignItems:'center',gap:5,
+        }}>
+          <span style={{fontSize:11}}>💎</span>
+          <span className="orbitron" style={{fontSize:13,fontWeight:700,color:'#a78bfa'}}>{s.ip}</span>
+          <span style={{fontSize:8.5,color:'#94a3b8'}}>IP</span>
+        </div>
+        <button onClick={()=>dispatch({type:'RESTART'})} style={{
+          padding:'3px 10px',borderRadius:5,
+          border:'1px solid rgba(255,255,255,.08)',
+          background:'transparent',color:'#64748b',fontSize:10,cursor:'pointer',
+        }}>↺</button>
+      </div>
+
+      {/* ── BODY ── */}
+      <div style={{display:'grid',gridTemplateColumns:'1fr 195px',overflow:'hidden'}}>
+
+        {/* LEFT */}
+        <div style={{display:'flex',flexDirection:'column',overflow:'hidden',padding:'10px 10px 10px 12px',gap:8}}>
+
+          {/* Factory Map */}
+          <div style={{
+            flex:1,minHeight:0,
+            display:'grid',gridTemplateColumns:'repeat(4,1fr)',gridTemplateRows:'repeat(3,1fr)',
+            gap:5,
+            filter:`brightness(${brightness})`,
+            transition:'filter 1.2s ease',
+          }}>
+            {CELLS.map(cell=>(
+              <FCell key={cell.id} cell={cell}
+                wastes={wmap[cell.id]||[]}
+                selected={s.selWaste?.cell===cell.id}
+                improved={s.improved.includes(cell.id)}
+                onWk={w=>dispatch({type:'SEL_WASTE',w})}
+              />
+            ))}
+          </div>
+
+          {/* Action bar */}
+          <div style={{
+            background:'linear-gradient(135deg,#0b1220,#111827)',
+            border:'1px solid #1a3050',borderRadius:9,
+            padding:'7px 12px',display:'flex',alignItems:'center',gap:10,flexShrink:0,
+          }}>
+            {s.selWaste?(
+              <>
+                <div style={{
+                  background:WT[s.selWaste.type].bg,
+                  border:`1px solid ${WT[s.selWaste.type].brd}`,
+                  borderRadius:7,padding:'3px 10px',
+                  display:'flex',alignItems:'center',gap:5,fontSize:11.5,
+                }}>
+                  <span>{WT[s.selWaste.type].icon}</span>
+                  <span style={{color:WT[s.selWaste.type].col}}>
+                    {WT[s.selWaste.type].label}（{CELLS.find(c=>c.id===s.selWaste.cell)?.nm}）
+                  </span>
+                </div>
+                <span style={{color:'#475569',fontSize:13}}>→</span>
+                {s.selCard?(
+                  <button onClick={handleApply}
+                    disabled={s.ip<s.selCard.cost}
+                    style={{
+                      padding:'6px 22px',borderRadius:8,border:'none',
+                      background:s.ip>=s.selCard.cost
+                        ?'linear-gradient(135deg,#10b981,#059669)'
+                        :'rgba(100,116,139,.3)',
+                      color:s.ip>=s.selCard.cost?'white':'#64748b',
+                      fontWeight:700,fontSize:13,
+                      cursor:s.ip>=s.selCard.cost?'pointer':'not-allowed',
+                      transition:'all .2s',
+                    }}
+                    onMouseOver={e=>{if(s.ip>=s.selCard.cost){e.currentTarget.style.transform='translateY(-1px)';e.currentTarget.style.boxShadow='0 6px 20px rgba(16,185,129,.4)'}}}
+                    onMouseOut={e=>{e.currentTarget.style.transform='';e.currentTarget.style.boxShadow=''}}
+                  >
+                    {s.ip>=s.selCard.cost?`⚡ ${s.selCard.nm} を適用！`:`💎 IP不足（${s.selCard.cost}IP）`}
+                  </button>
+                ):(
+                  <span style={{color:'#64748b',fontSize:11.5}}>↓ カードを選んで改善しよう</span>
+                )}
+              </>
+            ):(
+              <span style={{color:'#4b637a',fontSize:11.5}}>
+                {s.wastes.length>0?'🔍 工場マップのムダアイコンをクリック → カード選択 → 適用':'✨ ムダなし！ターンを進めると新ムダが発生します'}
+              </span>
+            )}
+          </div>
+
+          {/* Cards */}
+          <div style={{
+            background:'linear-gradient(135deg,#0b1220,#111827)',
+            border:'1px solid #1a3050',borderRadius:9,
+            padding:'8px 12px',flexShrink:0,
+          }}>
+            <div style={{fontSize:9.5,color:'#4b637a',marginBottom:6,letterSpacing:.8,display:'flex',alignItems:'center',gap:6}}>
+              🃏 改善カード
+              <span style={{color:'#64748b'}}>（{s.cards.length}枚 — 使うと新カードをドロー）</span>
+            </div>
+            <div className="card-row" style={{paddingBottom:6}}>
+              {s.cards.map(c=>(
+                <div key={c.id} className={applying===c.id?'applying':''}>
+                  <CardTile card={c}
+                    sel={s.selCard?.id===c.id}
+                    dis={!s.selWaste}
+                    onSel={c=>dispatch({type:'SEL_CARD',c})}
+                    twaste={swt}
+                  />
+                </div>
+              ))}
+              {s.cards.length===0&&<div style={{color:'#4b637a',fontSize:11,padding:'16px 0'}}>カードなし...</div>}
+            </div>
+          </div>
+        </div>
+
+        {/* RIGHT PANEL */}
+        <div style={{
+          display:'flex',flexDirection:'column',gap:7,
+          background:'linear-gradient(180deg,#0b1220,#070d1a)',
+          borderLeft:'1px solid #1a3050',
+          padding:9,overflow:'hidden',
+        }}>
+          {/* KPI */}
+          <div style={{background:'rgba(255,255,255,.02)',borderRadius:9,border:'1px solid #1a3050',padding:10,flexShrink:0}}>
+            <div style={{fontSize:9,color:'#4b637a',marginBottom:7,letterSpacing:.8}}>📊 KPI ダッシュボード</div>
+            <KBar label="利益率" value={s.kpi.profitRate} max={30} cfn={v=>v>=15?'#10b981':v>=7?'#f59e0b':'#ef4444'}/>
+            <KBar label="納期遵守率" value={s.kpi.deliveryRate} max={100} cfn={v=>v>=85?'#10b981':v>=70?'#f59e0b':'#ef4444'}/>
+            <KBar label="不良率" value={s.kpi.defectRate} max={20} isRev={true} cfn={v=>v<=3?'#10b981':v<=9?'#f59e0b':'#ef4444'}/>
+            <KBar label="生産性" value={s.kpi.productivity} max={100} cfn={v=>v>=80?'#10b981':v>=60?'#f59e0b':'#ef4444'}/>
+          </div>
+
+          {/* Wastes */}
+          <div style={{background:'rgba(255,255,255,.02)',borderRadius:9,border:'1px solid #1a3050',padding:10,flexShrink:0}}>
+            <div style={{fontSize:9,color:'#4b637a',marginBottom:6,letterSpacing:.8}}>⚠️ 残ムダ一覧</div>
+            {Object.entries(WT).map(([tp,info])=>{
+              const cnt=s.wastes.filter(w=>w.type===tp).length;
+              if(!cnt) return null;
+              return(
+                <div key={tp} style={{display:'flex',alignItems:'center',gap:4,marginBottom:3}}>
+                  <span style={{fontSize:11}}>{info.icon}</span>
+                  <span style={{fontSize:9.5,color:'#94a3b8',flex:1,lineHeight:1.2}}>{info.label}</span>
+                  <span style={{
+                    fontSize:9.5,fontWeight:700,
+                    color:cnt>=3?'#ef4444':cnt>=2?'#f59e0b':'#f97316',
+                    background:cnt>=3?'rgba(239,68,68,.15)':cnt>=2?'rgba(245,158,11,.15)':'rgba(249,115,22,.15)',
+                    borderRadius:4,padding:'1px 5px',
+                  }}>{cnt}</span>
+                </div>
+              );
+            })}
+            {s.wastes.length===0&&<div style={{fontSize:10,color:'#10b981',textAlign:'center',padding:'4px 0'}}>✨ ムダゼロ！</div>}
+          </div>
+
+          {/* Stats */}
+          <div style={{background:'rgba(255,255,255,.02)',borderRadius:9,border:'1px solid #1a3050',padding:10,flexShrink:0}}>
+            <div style={{fontSize:9,color:'#4b637a',marginBottom:5}}>🏅 進捗</div>
+            <div style={{fontSize:10.5,color:'#94a3b8',marginBottom:3}}>累計改善 <span style={{color:'#10b981',fontWeight:700}}>{s.totalImproved}</span>件</div>
+            <div style={{fontSize:10.5,color:'#94a3b8',marginBottom:3}}>工場Lv <span style={{color:'#a855f7',fontWeight:700}}>Lv.{s.lvl}</span></div>
+            <div style={{fontSize:8.5,color:'#374151',marginTop:5,lineHeight:1.5}}>
+              クリア条件<br/>利益率≥20% 納期≥90%<br/>不良率≤2% 生産性≥85%
+            </div>
+          </div>
+
+          {/* Events */}
+          <div style={{
+            background:'rgba(255,255,255,.02)',borderRadius:9,border:'1px solid #1a3050',
+            padding:10,flex:1,minHeight:0,display:'flex',flexDirection:'column',overflow:'hidden',
+          }}>
+            <div style={{fontSize:9,color:'#4b637a',marginBottom:5,letterSpacing:.8,flexShrink:0}}>📋 イベントログ</div>
+            <div style={{overflowY:'auto',flex:1}}>
+              {s.events.map(ev=>{
+                const brdC={start:'#00d4ff',ok:'#10b981',boss:'#ef4444',win:'#f59e0b',info:'#64748b'}[ev.tp]||'#64748b';
+                return(
+                  <div key={ev.id} className="evitem"
+                    style={{borderColor:brdC,background:'rgba(255,255,255,.015)',padding:'5px 7px'}}>
+                    <div style={{fontSize:10,color:'#cbd5e1',lineHeight:1.4}}>{ev.msg}</div>
+                    {ev.fx&&(
+                      <div style={{marginTop:2,display:'flex',gap:6,flexWrap:'wrap'}}>
+                        {Object.entries(ev.fx).map(([k,v])=>{
+                          const lb={profitRate:'利益率',deliveryRate:'納期率',defectRate:'不良率',productivity:'生産性'};
+                          const good=k==='defectRate'?v<0:v>0;
+                          if(!lb[k]) return null;
+                          return<span key={k} style={{fontSize:8.5,color:good?'#10b981':'#ef4444'}}>{lb[k]}{v>0?'+':''}{v}</span>;
+                        })}
+                      </div>
+                    )}
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      </div>
+
+      {/* Boss */}
+      {s.boss&&<BossModal boss={s.boss} dispatch={dispatch}/>}
+
+      {/* Number Pops */}
+      {s.pops.map(p=>(
+        <div key={p.id} className="npop" style={{left:p.x,top:p.y,color:p.col}}>{p.text}</div>
+      ))}
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App/>);
+</script>
+</body>
+</html>
