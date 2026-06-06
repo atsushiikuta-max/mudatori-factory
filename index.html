@@ -260,7 +260,8 @@ function hintOf(s){
 const byLens={};LENSES.forEach(l=>byLens[l.k]=[]);
 CASES.forEach(c=>{if(byLens[c.l])byLens[c.l].push(c);});
 function pickCase(lensKey,used){
- const pool=byLens[lensKey]||[];
+ // 出題は金額効果が明記された事例のみ（¥0事例はライブラリ閲覧専用）
+ const pool=(byLens[lensKey]||[]).filter(c=>c.y>0);
  const fresh=pool.filter(c=>!used.has(c.id));
  const arr=fresh.length?fresh:pool;
  return arr[Math.floor(Math.random()*arr.length)];
@@ -298,7 +299,8 @@ const RANKS=[
  {nm:'会長',      ic:'👑',c:'#f5a623'},
 ];
 // 3改善(=1チェックポイント)ごとの「累計改善額 必達ライン」。未達でゲームオーバー
-const CP_TARGETS=[350000,800000,1300000,1850000,2450000,3100000,3800000,4550000,5350000,6200000];
+// ※実事例の金額分布(中央値¥127k)からモンテカルロで難易度調整：CP1突破≈94%、会長到達≈48%
+const CP_TARGETS=[220000,600000,1040000,1560000,2140000,2750000,3430000,4160000,4900000,5700000];
 const CP_EVERY=3;          // 3ターンごと
 const MAX_NG=3;            // NG3回でゲームオーバー
 const GOAL_YEN=CP_TARGETS[CP_TARGETS.length-1];
