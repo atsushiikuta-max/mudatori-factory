@@ -669,7 +669,7 @@ function NameScreen({dispatch}){
      <label style={{fontSize:13,fontWeight:800,color:'#33405a'}}>氏名（任意）</label>
      <input value={name} onChange={e=>setName(e.target.value)} maxLength={16}
        onKeyDown={e=>{if(e.key==='Enter')start();}}
-       placeholder="例）飯田　※未入力ならゲスト"
+       placeholder="例）旭太郎　※未入力ならゲスト"
        style={{flex:1,minWidth:180,padding:'10px 14px',borderRadius:10,border:'2px solid var(--line)',fontSize:14,outline:'none'}}/>
     </div>
     {/* rules */}
