@@ -3,7 +3,7 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width,initial-scale=1.0">
-<title>イマドキフキソカチ工場 | 観察の型で学ぶカイゼンゲーム</title>
+<title>イマドキフキソカチのムダ取り工場 | 観察の型で学ぶカイゼンゲーム</title>
 <script src="https://cdn.tailwindcss.com"></script>
 <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
 <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
@@ -284,7 +284,43 @@ function effectOf(c){
  }[c.l]||{};
  return {...base,...add};
 }
-const GOAL_YEN=6000000;
+/* ============== 役職（10段階）＝3改善ごとの昇進 ============== */
+const RANKS=[
+ {nm:'班長',      ic:'🧢',c:'#36c95f'},
+ {nm:'係長',      ic:'📋',c:'#16c79a'},
+ {nm:'課長',      ic:'📈',c:'#3d8bf7'},
+ {nm:'次長',      ic:'🗂️',c:'#5b7cfa'},
+ {nm:'部長',      ic:'🏢',c:'#7c5cf0'},
+ {nm:'執行役員',  ic:'🎖️',c:'#9775fa'},
+ {nm:'常務取締役',ic:'🥈',c:'#c05cf0'},
+ {nm:'専務取締役',ic:'🥇',c:'#f7689f'},
+ {nm:'社長',      ic:'👔',c:'#ff7a3d'},
+ {nm:'会長',      ic:'👑',c:'#f5a623'},
+];
+// 3改善(=1チェックポイント)ごとの「累計改善額 必達ライン」。未達でゲームオーバー
+const CP_TARGETS=[350000,800000,1300000,1850000,2450000,3100000,3800000,4550000,5350000,6200000];
+const CP_EVERY=3;          // 3ターンごと
+const MAX_NG=3;            // NG3回でゲームオーバー
+const GOAL_YEN=CP_TARGETS[CP_TARGETS.length-1];
+
+/* ============== ランキング（localStorage） ============== */
+const LB_KEY='imadoki_ranking_v1';
+function loadLB(){try{return JSON.parse(localStorage.getItem(LB_KEY)||'[]');}catch(e){return [];}}
+function saveLB(entry){
+ const lb=loadLB().map(e=>{const{_new,...r}=e;return r;});
+ lb.push(entry);
+ lb.sort((a,b)=>b.rank-a.rank||b.yen-a.yen||a.solves-b.solves);
+ const top=lb.slice(0,30);
+ try{localStorage.setItem(LB_KEY,JSON.stringify(top));}catch(e){}
+ return top;
+}
+// 次のチェックポイント情報
+function nextCP(solves){
+ const passed=Math.floor(solves/CP_EVERY);
+ if(passed>=CP_TARGETS.length) return null;
+ return {cpNo:passed+1,target:CP_TARGETS[passed],
+   remSolves:CP_EVERY-(solves%CP_EVERY),rank:RANKS[passed]};
+}
 
 /* ============== state ============== */
 const INIT_KPI={profit:6.5,delivery:72,defect:8.5,productivity:58};
@@ -300,21 +336,24 @@ function spawnProblems(n,used,occupied){
  }
  return out;
 }
-function mkState(){
+function mkState(phase){
  const used=new Set();
  const problems=spawnProblems(7,used,[]);
- return {turn:1,ip:10,kpi:{...INIT_KPI},co2:100,revenue:8500,totalYen:0,score:0,combo:0,
+ return {phase:phase||'name',playerName:'',
+  turn:1,solves:0,ng:0,rank:0,ip:10,kpi:{...INIT_KPI},co2:100,revenue:8500,totalYen:0,score:0,combo:0,
   problems,used:[...used],lensCount:Object.fromEntries(LENSES.map(l=>[l.k,0])),
-  solved:[],selProblem:null,selLens:null,hintFor:null,reveal:null,
+  solved:[],selProblem:null,selLens:null,hintFor:null,reveal:null,promo:null,overReason:null,
   events:[{id:'e0',tp:'start',msg:'🏭 工場改革スタート！現場のムダを「観察の型」で見抜こう'}],
-  boss:null,bossDefeated:[],victory:false,pops:[],library:false,intro:true};
+  boss:null,bossDefeated:[],pops:[],library:false};
 }
 function clampKpi(k){return{profit:Math.min(35,Math.max(0,k.profit)),delivery:Math.min(100,Math.max(0,k.delivery)),
  defect:Math.min(30,Math.max(0,k.defect)),productivity:Math.min(100,Math.max(0,k.productivity))};}
 
 function reducer(s,a){
  switch(a.type){
-  case 'INTRO_CLOSE': return {...s,intro:false};
+  case 'SET_NAME': return {...s,playerName:a.name};
+  case 'START': return {...mkState('play'),playerName:(a.name||'').trim()||'ゲスト'};
+  case 'CLOSE_PROMO': return {...s,promo:null};
   case 'TOGGLE_LIB': return {...s,library:!s.library};
   case 'SEL_PROBLEM':
    if(s.boss)return s;
@@ -329,12 +368,17 @@ function reducer(s,a){
   case 'CLOSE_REVEAL': return {...s,reveal:null};
   case 'APPLY':{
    const p=s.selProblem,lk=s.selLens;
-   if(!p||!lk)return s;
+   if(!p||!lk||s.phase!=='play')return s;
    if(lk!==p.lens){
-    // 誤った視点
-    const msg=`🔎 「${LMAP[lk].label}」では見つけにくい…別の観察視点で見直そう`;
+    // 誤った視点＝NG
+    const ng=s.ng+1;
     const np=s.problems.map(x=>x.pid===p.pid?{...x,tries:x.tries+1}:x);
-    return {...s,problems:np,selLens:null,
+    if(ng>=MAX_NG){
+     return {...s,ng,phase:'over',selLens:null,overReason:{type:'ng'},
+      events:[{id:'e'+Date.now(),tp:'over',msg:`❌ NG ${MAX_NG}回でアウト…ゲームオーバー`},...s.events].slice(0,24)};
+    }
+    const msg=`🔎 NG ${ng}/${MAX_NG}：「${LMAP[lk].label}」では見つけにくい…観察視点を変えよう`;
+    return {...s,ng,problems:np,selLens:null,
      events:[{id:'e'+Date.now(),tp:'miss',msg},...s.events].slice(0,24)};
    }
    // 正解
@@ -351,25 +395,41 @@ function reducer(s,a){
    const used=new Set(s.used);
    const occupied=s.problems.filter(x=>x.pid!==p.pid).map(x=>x.cell);
    let rest=s.problems.filter(x=>x.pid!==p.pid);
+   const solves=s.solves+1;
    const turn=s.turn+1;
    let add=[];
    if(rest.length<7){add=spawnProblems(1,used,occupied);}
    const cellNm=CELLS.find(x=>x.id===p.cell)?.nm||'';
-   const ev={id:'e'+Date.now(),tp:'ok',
-    msg:`✅[${cellNm}] ${LMAP[p.lens].kana}「${LMAP[p.lens].label}」で改善！ ${yfmt(c.y)}/年`,fx};
-   // ボス出現：KPI悪化トリガー or マイルストーン（5改善ごと）に未撃破ボスが襲来
+   let events=[{id:'e'+Date.now(),tp:'ok',
+    msg:`✅[${cellNm}] ${LMAP[p.lens].kana}「${LMAP[p.lens].label}」で改善！ ${yfmt(c.y)}/年`,fx},...s.events].slice(0,24);
+   // ボス出現：チェックポイントを避けて 6改善ごと(4,10,16,22,28)に襲来
    let boss=s.boss;
-   if(!boss&&turn>3){
-    for(const b of BOSSES){if(!s.bossDefeated.includes(b.id)&&b.trig(kpi,{...s,co2})){boss={...b,curHp:b.hp};break;}}
-    if(!boss&&turn%6===0){const nx=BOSSES.find(b=>!s.bossDefeated.includes(b.id));if(nx)boss={...nx,curHp:nx.hp};}
+   if(!boss&&solves%6===4){const nx=BOSSES.find(b=>!s.bossDefeated.includes(b.id));if(nx)boss={...nx,curHp:nx.hp};}
+   // チェックポイント判定（3改善ごと）
+   let phase='play',rank=s.rank,promo=null,overReason=null,reveal={case:c,lens:p.lens,fx,cellNm};
+   if(solves%CP_EVERY===0){
+    const cp=solves/CP_EVERY;                 // 1..10
+    const target=CP_TARGETS[cp-1];
+    if(totalYen>=target){
+     rank=cp;const rk=RANKS[cp-1];reveal=null;
+     if(cp>=RANKS.length){
+      phase='win';boss=null;
+      events=[{id:'e'+Date.now()+'w',tp:'win',msg:`👑 全チェックポイント突破！『${rk.nm}』に就任！工場改革コンプリート`},...events].slice(0,24);
+     }else{
+      promo={rank:cp,rk,nextTarget:CP_TARGETS[cp]};
+      events=[{id:'e'+Date.now()+'p',tp:'win',msg:`🎉 昇進！『${rk.nm}』に任命（CP${cp}：${yfmt(totalYen)}達成）`},...events].slice(0,24);
+     }
+    }else{
+     phase='over';boss=null;reveal=null;
+     overReason={type:'cp',cp,target,have:totalYen};
+     events=[{id:'e'+Date.now()+'o',tp:'over',msg:`💥 CP${cp}の必達ライン未達（${yfmt(totalYen)}／${yfmt(target)}）…ゲームオーバー`},...events].slice(0,24);
+    }
    }
-   const usedL=Object.values(lensCount).filter(v=>v>0).length;
-   const victory=totalYen>=GOAL_YEN&&usedL>=10&&kpi.profit>=18&&kpi.defect<=3&&kpi.delivery>=88&&kpi.productivity>=85;
-   return {...s,turn,kpi,co2,totalYen,revenue,combo,score:s.score+Math.round((c.y||0)/1000)+combo*5,
+   return {...s,phase,turn,solves,rank,kpi,co2,totalYen,revenue,combo,score:s.score+Math.round((c.y||0)/1000)+combo*5,
     ip:s.ip+ipGain,problems:[...rest,...add],used:[...used],lensCount,
     solved:[{id:c.id,lens:p.lens,case:c},...s.solved].slice(0,200),
-    selProblem:null,selLens:null,hintFor:null,reveal:{case:c,lens:p.lens,fx,cellNm},
-    events:[ev,...s.events].slice(0,24),boss,victory};
+    selProblem:null,selLens:null,hintFor:null,reveal,promo,overReason,
+    events,boss};
   }
   case 'BOSS_ATK':{
    if(!s.boss)return s;const at=s.boss.atk;let kpi={...s.kpi};
@@ -569,55 +629,142 @@ function BossModal({boss,dispatch}){
  </div>);
 }
 
-function IntroModal({dispatch}){
- return(<div className="ovl">
-  <div className="modal" style={{maxWidth:720,width:'100%',maxHeight:'90vh',overflow:'auto'}}>
-   <div style={{background:'linear-gradient(135deg,#5b7cfa,#9775fa)',padding:'20px 24px',color:'#fff'}}>
+function RankBadge({rank,size}){
+ // rank: 0=新人, 1..10
+ if(rank<=0) return(<span className="chip" style={{background:'#eef3ff',color:'#7b8aa0',fontWeight:800,fontSize:size||11}}>🧑‍🏭 担当（昇進前）</span>);
+ const r=RANKS[rank-1];
+ return(<span className="chip" style={{background:`linear-gradient(135deg,${r.c},${r.c}cc)`,color:'#fff',fontWeight:900,fontSize:size||11}}>{r.ic} {r.nm}</span>);
+}
+function Leaderboard({highlight,compact}){
+ const lb=loadLB();
+ return(<div style={{background:'var(--soft)',borderRadius:12,padding:'10px 12px'}}>
+  <div style={{fontSize:11,fontWeight:900,color:'#5b7cfa',marginBottom:6,display:'flex',alignItems:'center',gap:5}}>🏆 ランキング {lb.length===0&&<span style={{color:'#aab6c8',fontWeight:500}}>— まだ記録なし</span>}</div>
+  {lb.slice(0,compact?5:10).map((e,i)=>(
+   <div key={i} style={{display:'flex',alignItems:'center',gap:8,padding:'4px 6px',borderRadius:8,
+     background:(highlight&&e._new)?'#fff7e6':'transparent',fontSize:11}}>
+    <span className="orbitron" style={{width:20,fontWeight:900,color:i===0?'#f5a623':i===1?'#9aa7bd':i===2?'#c98a4b':'#aab6c8'}}>{i+1}</span>
+    <span style={{flex:1,fontWeight:700,color:'#33405a',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}}>{e.name}</span>
+    <span className="chip" style={{background:'#fff',border:'1px solid var(--line)',color:'#5a6a82',fontWeight:800,fontSize:10}}>{e.rankName}</span>
+    <span className="orbitron" style={{width:74,textAlign:'right',fontWeight:800,color:'#1c9c5e'}}>{yfmt(e.yen)}</span>
+   </div>))}
+ </div>);
+}
+
+function NameScreen({dispatch}){
+ const [name,setName]=useState('');
+ const start=()=>dispatch({type:'START',name});
+ return(<div className="ovl" style={{background:'rgba(238,244,255,.6)'}}>
+  <div className="modal" style={{maxWidth:760,width:'100%',maxHeight:'92vh',overflow:'auto'}}>
+   <div style={{background:'linear-gradient(135deg,#5b7cfa,#9775fa)',padding:'22px 26px',color:'#fff'}}>
     <div style={{fontSize:13,opacity:.9,fontWeight:700,letterSpacing:1}}>旭鉄工 観察主義 ｜ 観察の型で学ぶカイゼンゲーム</div>
-    <div style={{fontSize:24,fontWeight:900,marginTop:3}}>イマドキフキソカチ工場</div>
+    <div style={{fontSize:26,fontWeight:900,marginTop:3}}>イマドキフキソカチのムダ取り工場</div>
     <div style={{fontSize:12.5,opacity:.95,marginTop:8,lineHeight:1.6}}>
-     カイゼンはセンスではなく「観察の型」を持つこと。現場のムダを見抜く<b>10の観察視点</b>を使い、実在の改善事例で工場を生まれ変わらせよう。</div>
+     現場のムダを見抜く<b>10の観察視点</b>で実在の改善事例を成立させ、<b>3改善ごとの必達ラインをクリアして昇進</b>。担当から始め、<b>会長</b>を目指せ！</div>
    </div>
-   <div style={{padding:'18px 22px'}}>
-    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(200px,1fr))',gap:8}}>
+   <div style={{padding:'18px 24px'}}>
+    {/* name input */}
+    <div style={{display:'flex',gap:10,alignItems:'center',marginBottom:14,flexWrap:'wrap'}}>
+     <label style={{fontSize:13,fontWeight:800,color:'#33405a'}}>氏名（任意）</label>
+     <input value={name} onChange={e=>setName(e.target.value)} maxLength={16}
+       onKeyDown={e=>{if(e.key==='Enter')start();}}
+       placeholder="例）飯田　※未入力ならゲスト"
+       style={{flex:1,minWidth:180,padding:'10px 14px',borderRadius:10,border:'2px solid var(--line)',fontSize:14,outline:'none'}}/>
+    </div>
+    {/* rules */}
+    <div style={{display:'grid',gridTemplateColumns:'1fr 1fr',gap:10,marginBottom:14}}>
+     <div style={{background:'#fff5f5',border:'1px solid #ffd6d6',borderRadius:12,padding:'10px 12px'}}>
+      <div style={{fontSize:12,fontWeight:900,color:'#e0455e',marginBottom:4}}>⚠️ ゲームオーバー条件</div>
+      <div style={{fontSize:11,color:'#8a5a64',lineHeight:1.6}}>① <b>NGを3回</b>出す（観察視点の選択ミス）<br/>② <b>3改善ごとの必達ライン</b>（累計改善額）に未達</div>
+     </div>
+     <div style={{background:'#eafff2',border:'1px solid #bdebd2',borderRadius:12,padding:'10px 12px'}}>
+      <div style={{fontSize:12,fontWeight:900,color:'#1c9c5e',marginBottom:4}}>🎖️ 昇進＝クリア</div>
+      <div style={{fontSize:11,color:'#3a7a5a',lineHeight:1.6}}>3改善ごとに必達ラインを超えると昇進。<br/>担当→班長→…→<b>会長</b>（全10段階）でコンプリート！</div>
+     </div>
+    </div>
+    {/* rank ladder */}
+    <div style={{display:'flex',gap:6,flexWrap:'wrap',marginBottom:14,alignItems:'center'}}>
+     {RANKS.map((r,i)=>(<React.Fragment key={r.nm}>
+       <span className="chip" style={{background:'#fff',border:`1.5px solid ${r.c}`,color:r.c,fontWeight:800,fontSize:10.5}}>{r.ic}{r.nm}</span>
+       {i<RANKS.length-1&&<span style={{color:'#cbd5e6',fontSize:10}}>→</span>}
+     </React.Fragment>))}
+    </div>
+    {/* lenses mini */}
+    <div style={{display:'grid',gridTemplateColumns:'repeat(auto-fill,minmax(150px,1fr))',gap:7,marginBottom:14}}>
      {LENSES.map(l=>(
-      <div key={l.k} style={{display:'flex',gap:9,alignItems:'center',border:'1px solid var(--line)',borderRadius:12,padding:'8px 10px'}}>
-       <LensArt k={l.k} size={44}/>
-       <div>
-        <div style={{fontSize:12.5,fontWeight:900,color:l.c2}}><span className="orbitron">{l.kana}</span>：{l.label}</div>
-        <div style={{fontSize:9.5,color:'#7b8aa0',lineHeight:1.35}}>{l.sub}</div>
-       </div>
+      <div key={l.k} style={{display:'flex',gap:7,alignItems:'center',border:'1px solid var(--line)',borderRadius:10,padding:'5px 8px'}}>
+       <LensArt k={l.k} size={34}/>
+       <div style={{fontSize:11,fontWeight:900,color:l.c2,lineHeight:1.2}}><span className="orbitron">{l.kana}</span> {l.label}</div>
       </div>))}
     </div>
-    <div style={{marginTop:14,fontSize:11.5,color:'#5a6a82',background:'var(--soft)',borderRadius:10,padding:'10px 14px',lineHeight:1.7}}>
-     <b>遊び方</b>：①工場マップの<b>⚠️</b>をクリックして現場を観察 → ②困りごとに合う<b>観察視点カード</b>を選ぶ → ③適用すると実在のカイゼン事例が成立しKPIと改善額が伸びる。<br/>
-     <b>クリア条件</b>：累計改善額 {yfmt(GOAL_YEN)} 達成 ＋ 10視点すべて使用 ＋ 全KPI良好。
-    </div>
-    <button className="btn" onClick={()=>dispatch({type:'INTRO_CLOSE'})}
-      style={{marginTop:16,width:'100%',padding:'12px',color:'#fff',fontSize:15,background:'linear-gradient(135deg,#5b7cfa,#9775fa)'}}>現場を観察する 🔍</button>
+    <Leaderboard/>
+    <button className="btn" onClick={start}
+      style={{marginTop:16,width:'100%',padding:'13px',color:'#fff',fontSize:16,background:'linear-gradient(135deg,#5b7cfa,#9775fa)'}}>▶ ゲーム開始（現場を観察する）</button>
    </div>
   </div>
  </div>);
 }
 
-function Victory({s,dispatch}){
- return(<div className="ovl" style={{background:'rgba(255,250,240,.85)'}}>
-  <div className="modal" style={{maxWidth:560,width:'100%',textAlign:'center',padding:'34px 28px'}}>
-   <div style={{fontSize:64}}>🏆</div>
-   <div style={{fontSize:28,fontWeight:900,color:'#f5a623'}}>工場改革 達成！</div>
-   <div style={{fontSize:13,color:'var(--muted)',marginTop:6}}>{s.turn}ターンで{s.solved.length}件の実カイゼンを成立。10の観察視点をマスターしました。</div>
-   <div style={{margin:'18px 0',background:'linear-gradient(135deg,#eafff2,#e7f0ff)',borderRadius:16,padding:'16px'}}>
+function PromoModal({promo,dispatch}){
+ const r=promo.rk;
+ return(<div className="ovl" onClick={()=>dispatch({type:'CLOSE_PROMO'})}>
+  <div className="modal" style={{maxWidth:420,width:'100%',textAlign:'center',padding:'30px 26px',overflow:'hidden'}} onClick={e=>e.stopPropagation()}>
+   <div style={{fontSize:13,fontWeight:800,color:'#9775fa',letterSpacing:1}}>🎉 CHECKPOINT CLEAR — 昇進辞令</div>
+   <div style={{fontSize:64,margin:'10px 0 2px'}}>{r.ic}</div>
+   <div style={{fontSize:13,color:'var(--muted)'}}>あなたは本日付で</div>
+   <div style={{fontSize:30,fontWeight:900,color:r.c,margin:'2px 0 6px'}}>{r.nm}</div>
+   <div style={{fontSize:13,color:'var(--muted)'}}>に任命されました</div>
+   <div style={{marginTop:14,background:'var(--soft)',borderRadius:12,padding:'10px 14px',fontSize:12,color:'#5a6a82'}}>
+    次のチェックポイント必達ライン：<b style={{color:'#1c9c5e'}}>{yfmt(promo.nextTarget)}</b>（累計改善額）
+   </div>
+   <button className="btn" onClick={()=>dispatch({type:'CLOSE_PROMO'})}
+     style={{marginTop:16,width:'100%',padding:'11px',color:'#fff',fontSize:14,background:`linear-gradient(135deg,${r.c},${r.c}cc)`}}>引き続き改善する →</button>
+  </div>
+ </div>);
+}
+
+function ResultStats({s}){
+ return(<div style={{display:'flex',gap:10,justifyContent:'center',flexWrap:'wrap',marginBottom:16}}>
+   {[['改善件数',s.solves+'件','#5b7cfa'],['利益率',s.kpi.profit.toFixed(1)+'%','#2bb673'],
+     ['納期',s.kpi.delivery.toFixed(0)+'%','#4dabf7'],['不良率',s.kpi.defect.toFixed(1)+'%','#f5a623'],
+     ['生産性',s.kpi.productivity.toFixed(0)+'%','#9775fa']].map(i=>(
+     <div key={i[0]} style={{background:'var(--soft)',borderRadius:12,padding:'9px 14px',border:`1px solid ${i[2]}33`}}>
+      <div style={{fontSize:10,color:'#7b8aa0'}}>{i[0]}</div>
+      <div className="orbitron" style={{fontSize:18,fontWeight:900,color:i[2]}}>{i[1]}</div></div>))}
+ </div>);
+}
+function WinScreen({s,dispatch}){
+ return(<div className="ovl" style={{background:'rgba(255,250,240,.9)'}}>
+  <div className="modal" style={{maxWidth:600,width:'100%',textAlign:'center',padding:'30px 28px',maxHeight:'94vh',overflow:'auto'}}>
+   <div style={{fontSize:64}}>👑</div>
+   <div style={{fontSize:28,fontWeight:900,color:'#f5a623'}}>会長就任 — 工場改革コンプリート！</div>
+   <div style={{fontSize:13,color:'var(--muted)',marginTop:6}}>{s.playerName} さんは全10チェックポイントを突破し、担当から<b>会長</b>まで上り詰めました。</div>
+   <div style={{margin:'16px 0',background:'linear-gradient(135deg,#fff3d6,#eafff2)',borderRadius:16,padding:'16px'}}>
     <div style={{fontSize:11,color:'#2bb673',fontWeight:700}}>累計改善額</div>
     <div className="orbitron" style={{fontSize:34,fontWeight:900,color:'#1c9c5e'}}>{yfmt(s.totalYen)}<span style={{fontSize:13,color:'#7b8aa0'}}> /年</span></div>
    </div>
-   <div style={{display:'flex',gap:10,justifyContent:'center',flexWrap:'wrap',marginBottom:18}}>
-    {[['利益率',s.kpi.profit.toFixed(1)+'%','#2bb673'],['納期',s.kpi.delivery.toFixed(0)+'%','#5b7cfa'],
-      ['不良率',s.kpi.defect.toFixed(1)+'%','#f5a623'],['生産性',s.kpi.productivity.toFixed(0)+'%','#9775fa']].map(i=>(
-      <div key={i[0]} style={{background:'var(--soft)',borderRadius:12,padding:'10px 16px',border:`1px solid ${i[2]}33`}}>
-       <div style={{fontSize:10,color:'#7b8aa0'}}>{i[0]}</div>
-       <div className="orbitron" style={{fontSize:20,fontWeight:900,color:i[2]}}>{i[1]}</div></div>))}
+   <ResultStats s={s}/>
+   <Leaderboard highlight/>
+   <button className="btn" onClick={()=>dispatch({type:'RESTART'})} style={{marginTop:16,padding:'12px 32px',color:'#fff',fontSize:15,background:'linear-gradient(135deg,#5b7cfa,#9775fa)'}}>🔄 もう一度プレイ</button>
+  </div>
+ </div>);
+}
+function GameOverScreen({s,dispatch}){
+ const o=s.overReason||{};
+ const reasonText = o.type==='ng'
+  ? `観察視点の選択ミス（NG）が ${MAX_NG}回 に達しました。`
+  : `チェックポイント${o.cp}の必達ライン ${yfmt(o.target)} に対し、累計改善額は ${yfmt(o.have)} で未達でした。`;
+ return(<div className="ovl" style={{background:'rgba(255,240,242,.9)'}}>
+  <div className="modal" style={{maxWidth:580,width:'100%',textAlign:'center',padding:'30px 28px',maxHeight:'94vh',overflow:'auto'}}>
+   <div style={{fontSize:60}}>{o.type==='ng'?'❌':'💥'}</div>
+   <div style={{fontSize:26,fontWeight:900,color:'#e0455e'}}>ゲームオーバー</div>
+   <div style={{fontSize:12.5,color:'var(--muted)',marginTop:6,lineHeight:1.6}}>{reasonText}</div>
+   <div style={{margin:'16px 0',display:'flex',justifyContent:'center',alignItems:'center',gap:10,flexWrap:'wrap'}}>
+    <span style={{fontSize:12,color:'#7b8aa0'}}>{s.playerName} さんの到達役職</span>
+    <RankBadge rank={s.rank} size={14}/>
    </div>
-   <button className="btn" onClick={()=>dispatch({type:'RESTART'})} style={{padding:'12px 32px',color:'#fff',fontSize:15,background:'linear-gradient(135deg,#5b7cfa,#9775fa)'}}>🔄 もう一度</button>
+   <ResultStats s={s}/>
+   <Leaderboard highlight/>
+   <button className="btn" onClick={()=>dispatch({type:'RESTART'})} style={{marginTop:16,padding:'12px 32px',color:'#fff',fontSize:15,background:'linear-gradient(135deg,#5b7cfa,#9775fa)'}}>🔄 もう一度挑戦</button>
   </div>
  </div>);
 }
@@ -640,26 +787,45 @@ function App(){
   }else{dispatch({type:'APPLY'});}
  },[s.selProblem,s.selLens]);
 
- const pmap={};CELLS.forEach(c=>pmap[c.id]=s.problems.filter(p=>p.cell===c.id));
- const doneCells=new Set();// cells improved (no longer track separately; mark done if previously had & now empty) — skip
- const usedL=Object.values(s.lensCount).filter(v=>v>0).length;
+ const recorded=useRef(false);
+ const [,forceLB]=useState(0);
+ useEffect(()=>{
+  if((s.phase==='over'||s.phase==='win')&&!recorded.current){
+   recorded.current=true;
+   saveLB({name:s.playerName||'ゲスト',rank:s.rank,rankName:s.rank>0?RANKS[s.rank-1].nm:'担当',
+     yen:s.totalYen,solves:s.solves,score:s.score,_new:true});
+   forceLB(x=>x+1);
+  }
+  if(s.phase==='play'||s.phase==='name') recorded.current=false;
+ },[s.phase]);
 
- if(s.victory)return <Victory s={s} dispatch={dispatch}/>;
+ const pmap={};CELLS.forEach(c=>pmap[c.id]=s.problems.filter(p=>p.cell===c.id));
+ const usedL=Object.values(s.lensCount).filter(v=>v>0).length;
+ const cp=nextCP(s.solves);
+
+ if(s.phase==='name')return <NameScreen dispatch={dispatch}/>;
+ if(s.phase==='win') return <WinScreen s={s} dispatch={dispatch}/>;
+ if(s.phase==='over')return <GameOverScreen s={s} dispatch={dispatch}/>;
 
  return(<div style={{height:'100vh',display:'grid',gridTemplateRows:'52px 1fr',overflow:'hidden'}}>
   {/* HEADER */}
   <div style={{display:'flex',alignItems:'center',gap:10,padding:'0 16px',background:'rgba(255,255,255,.8)',
     backdropFilter:'blur(8px)',borderBottom:'1px solid var(--line)'}}>
-   <span style={{fontSize:22}}>🏭</span>
-   <span style={{fontSize:15,fontWeight:900,background:'linear-gradient(135deg,#5b7cfa,#9775fa)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent'}}>イマドキフキソカチ工場</span>
-   <span className="chip orbitron" style={{background:'linear-gradient(135deg,#5b7cfa,#9775fa)',color:'#fff'}}>TURN {s.turn}</span>
+   <span style={{fontSize:20}}>🏭</span>
+   <span style={{fontSize:14,fontWeight:900,background:'linear-gradient(135deg,#5b7cfa,#9775fa)',WebkitBackgroundClip:'text',WebkitTextFillColor:'transparent',whiteSpace:'nowrap'}}>イマドキフキソカチのムダ取り工場</span>
+   <RankBadge rank={s.rank}/>
+   <span className="chip orbitron" style={{background:'#eef3ff',color:'#5b7cfa',fontWeight:800}}>TURN {s.solves}</span>
    <div style={{flex:1}}/>
+   {/* NG */}
+   <div style={{display:'flex',alignItems:'center',gap:3,marginRight:2}} title={`NG ${s.ng}/${MAX_NG}`}>
+    <span style={{fontSize:8.5,color:'#9aa7bd',fontWeight:700,marginRight:2}}>NG</span>
+    {[0,1,2].map(i=><span key={i} style={{fontSize:13}}>{i<s.ng?'❌':'⭕'}</span>)}
+   </div>
    <Stat label="累計改善額" value={yfmt(s.totalYen)} color="#1c9c5e" big/>
    <Stat label="売上" value={'¥'+s.revenue.toLocaleString()+'万'} color="#2bb673"/>
-   <Stat label="CO₂指数" value={s.co2.toFixed(0)} color={s.co2<=90?'#15c08a':s.co2>=115?'#ef5366':'#f5a623'}/>
    <span className="chip" style={{background:'#eef3ff',color:'#5b7cfa',fontWeight:800}}>💡 {s.ip} IP</span>
    <button className="btn" onClick={()=>dispatch({type:'TOGGLE_LIB'})} style={{background:'var(--soft)',padding:'6px 12px',fontSize:12,color:'#5b7cfa'}}>📚 事例</button>
-   <button className="btn" onClick={()=>dispatch({type:'RESTART'})} style={{background:'var(--soft)',padding:'6px 10px',fontSize:13,color:'var(--muted)'}}>↺</button>
+   <button className="btn" onClick={()=>{if(confirm('最初の画面に戻りますか？（現在の記録は保存されません）'))dispatch({type:'RESTART'})}} style={{background:'var(--soft)',padding:'6px 10px',fontSize:13,color:'var(--muted)'}}>↺</button>
   </div>
 
   {/* BODY */}
@@ -728,17 +894,34 @@ function App(){
      <KBar label="生産性" value={s.kpi.productivity} max={100} fmt={v=>v.toFixed(0)+'%'} good={v=>v>=85}/>
     </div>
     <div className="panel" style={{padding:12,flexShrink:0}}>
-     <div style={{fontSize:11,fontWeight:800,color:'var(--muted)',marginBottom:6}}>🎯 クリア条件</div>
-     <Goal label="累計改善額" cur={yfmt(s.totalYen)} ok={s.totalYen>=GOAL_YEN} tgt={yfmt(GOAL_YEN)}/>
-     <Goal label="10視点すべて使用" cur={usedL+'/10'} ok={usedL>=10}/>
-     <Goal label="利益率 ≥18%" cur={s.kpi.profit.toFixed(1)+'%'} ok={s.kpi.profit>=18}/>
-     <Goal label="納期 ≥88% / 不良 ≤3%" cur={s.kpi.delivery.toFixed(0)+'/'+s.kpi.defect.toFixed(1)} ok={s.kpi.delivery>=88&&s.kpi.defect<=3}/>
-     <Goal label="生産性 ≥85%" cur={s.kpi.productivity.toFixed(0)+'%'} ok={s.kpi.productivity>=85}/>
+     <div style={{fontSize:11,fontWeight:800,color:'var(--muted)',marginBottom:8,display:'flex',alignItems:'center',gap:6}}>🎖️ 昇進トラッカー <span style={{flex:1}}/><span style={{fontSize:10,color:'#9775fa',fontWeight:700}}>{s.rank}/10 役職</span></div>
+     {cp?(()=>{
+       const reached=Math.min(100,Math.round(s.totalYen/cp.target*100));
+       const ok=s.totalYen>=cp.target;
+       return(<>
+        <div style={{display:'flex',alignItems:'center',gap:6,marginBottom:6}}>
+         <span style={{fontSize:11,color:'#5a6a82'}}>次の昇進</span>
+         <span className="chip" style={{background:`linear-gradient(135deg,${cp.rank.c},${cp.rank.c}cc)`,color:'#fff',fontWeight:900,fontSize:11}}>{cp.rank.ic} {cp.rank.nm}</span>
+         <span style={{flex:1}}/>
+         <span style={{fontSize:11,fontWeight:800,color:'#5b7cfa'}}>あと{cp.remSolves}改善でCP{cp.cpNo}</span>
+        </div>
+        <div style={{display:'flex',justifyContent:'space-between',fontSize:10,marginBottom:3}}>
+         <span style={{color:'#9aa7bd'}}>必達ライン（累計改善額）</span>
+         <span className="orbitron" style={{fontWeight:800,color:ok?'#2bb673':'#e0455e'}}>{yfmt(s.totalYen)} / {yfmt(cp.target)}</span>
+        </div>
+        <div style={{height:8,background:'#ffe9ec',borderRadius:99,overflow:'hidden'}}>
+         <div className="kfill" style={{width:reached+'%',background:ok?'linear-gradient(90deg,#2bb673,#2bb673)':'linear-gradient(90deg,#f5a623,#ef5366)'}}/>
+        </div>
+        <div style={{marginTop:7,fontSize:10,color:'#93a1b8',lineHeight:1.5}}>⚠️ CP{cp.cpNo}（{cp.remSolves}改善後）までに必達ライン未達でゲームオーバー</div>
+       </>);
+     })():(
+      <div style={{fontSize:11,color:'#2bb673',fontWeight:800,textAlign:'center',padding:'8px 0'}}>👑 最終CP！会長まであと少し</div>
+     )}
     </div>
     <div className="panel" style={{padding:12,flex:1,minHeight:0,display:'flex',flexDirection:'column',overflow:'hidden'}}>
      <div style={{fontSize:11,fontWeight:800,color:'var(--muted)',marginBottom:6}}>📋 改善ログ{s.combo>1&&<span style={{color:'#f5a623',marginLeft:6}}>🔥{s.combo}連続</span>}</div>
      <div style={{overflowY:'auto',flex:1}}>
-      {s.events.map(ev=>{const col={start:'#5b7cfa',ok:'#2bb673',boss:'#ef5366',win:'#f5a623',miss:'#f5a623'}[ev.tp]||'#9aa7bd';
+      {s.events.map(ev=>{const col={start:'#5b7cfa',ok:'#2bb673',boss:'#ef5366',win:'#f5a623',miss:'#f5a623',over:'#ef5366'}[ev.tp]||'#9aa7bd';
        return(<div key={ev.id} className="evitem" style={{borderColor:col,padding:'6px 9px'}}>
         <div style={{fontSize:10.5,color:'#42506a',lineHeight:1.4}}>{ev.msg}</div>
         {ev.fx&&<div style={{marginTop:3,display:'flex',gap:6,flexWrap:'wrap'}}>{fxList(ev.fx)}</div>}
@@ -748,8 +931,8 @@ function App(){
    </div>
   </div>
 
-  {s.intro&&<IntroModal dispatch={dispatch}/>}
   {s.reveal&&<RevealModal reveal={s.reveal} dispatch={dispatch}/>}
+  {s.promo&&<PromoModal promo={s.promo} dispatch={dispatch}/>}
   {s.library&&<LibraryModal solved={s.solved} dispatch={dispatch}/>}
   {s.boss&&<BossModal boss={s.boss} dispatch={dispatch}/>}
   {s.pops.map(p=><div key={p.id} className="npop orbitron" style={{left:p.x,top:p.y,color:p.col,fontSize:22}}>{p.text}</div>)}
