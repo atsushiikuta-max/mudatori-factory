@@ -490,7 +490,7 @@ function hash(s){let h=0;for(let i=0;i<s.length;i++){h=(h*31+s.charCodeAt(i))|0;
 function FCell({cell,problems,sel,done,onP}){
  const has=problems.length>0;
  return(<div className={`fcell ${has?'clickable':''} ${sel?'sel':''} ${done&&!has?'done':''}`}
-   style={{padding:'8px 5px',minHeight:96,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}}>
+   style={{padding:'6px 5px',minHeight:0,overflow:'hidden',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}}>
   <div style={{fontSize:44,lineHeight:1,pointerEvents:'none'}}>{cell.ic}</div>
   <div style={{fontSize:19,color:'#56657d',marginTop:6,fontWeight:800,textAlign:'center',lineHeight:1.2,pointerEvents:'none'}}>{cell.nm}</div>
   {problems.map(p=><ProblemBadge key={p.pid} p={p} onClick={onP}/>)}
@@ -841,7 +841,7 @@ function App(){
       <span style={{flex:1}}/>
       <span style={{fontSize:10,fontWeight:700,color:'#9775fa'}}>制覇視点 {usedL}/10</span>
      </div>
-     <div style={{flex:1,minHeight:0,display:'grid',gridTemplateColumns:'repeat(4,1fr)',gridTemplateRows:'repeat(3,1fr)',gap:8}}>
+     <div style={{flex:1,minHeight:0,display:'grid',gridTemplateColumns:'repeat(4,1fr)',gridTemplateRows:'repeat(3,minmax(0,1fr))',gap:8}}>
       {CELLS.map(c=><FCell key={c.id} cell={c} problems={pmap[c.id]||[]}
         sel={s.selProblem?.cell===c.id} done={false}
         onP={p=>dispatch({type:'SEL_PROBLEM',p})}/>)}
